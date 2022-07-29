@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alandtsang/go-leaderelection/datasource/mysql/biz/leaderinfo"
 	"github.com/alandtsang/go-leaderelection/datasource/mysql/dal/model"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
@@ -38,6 +40,20 @@ func GetResourceLock() resourcelock.Interface {
 func (l *mysqlResourceLock) Get(ctx context.Context) (*resourcelock.LeaderElectionRecord, []byte, error) {
 	var record *resourcelock.LeaderElectionRecord
 
+	li, err := leaderinfo.Fetch(ctx, l.identity)
+	if err != nil {
+		log.Printf("mysqlResourceLock Get failed, %v", err)
+		return nil, nil, err
+	}
+
+	record = &resourcelock.LeaderElectionRecord{
+		HolderIdentity:       li.LeaderIdentity,
+		LeaseDurationSeconds: int(li.LeaseDurationSeconds),
+		AcquireTime:          v1.NewTime(*l.record.LastAcquireAt),
+		RenewTime:            v1.NewTime(*l.record.LastRenewAt),
+		LeaderTransitions:    int(l.record.Transitions),
+	}
+
 	recordByte, err := json.Marshal(*record)
 	if err != nil {
 		return nil, nil, err
@@ -48,11 +64,37 @@ func (l *mysqlResourceLock) Get(ctx context.Context) (*resourcelock.LeaderElecti
 
 // Create attempts to create a LeaderElectionRecord.
 func (l *mysqlResourceLock) Create(ctx context.Context, ler resourcelock.LeaderElectionRecord) error {
+	params := &leaderinfo.CreateLeaderInfoParams{
+		LeaderIdentity:       ler.HolderIdentity,
+		Transitions:          uint64(ler.LeaderTransitions),
+		LeaseDurationSeconds: uint64(ler.LeaseDurationSeconds),
+		LastAcquireAt:        ler.AcquireTime.Time,
+		LastRenewAt:          ler.RenewTime.Time,
+	}
+	if err := leaderinfo.Create(ctx, params); err != nil {
+		log.Printf("mysqlResourceLock Create params %+v failed, %v", params, err)
+		return err
+	}
+
 	return nil
 }
 
 // Update will update and existing LeaderElectionRecord.
 func (l *mysqlResourceLock) Update(ctx context.Context, ler resourcelock.LeaderElectionRecord) error {
+	params := &leaderinfo.UpdateLeaderInfoParams{
+		ID:                   1,
+		LeaderIdentity:       ler.HolderIdentity,
+		Transitions:          uint64(ler.LeaderTransitions),
+		LeaseDurationSeconds: uint64(ler.LeaseDurationSeconds),
+		LastAcquireAt:        ler.AcquireTime.Time,
+		LastRenewAt:          ler.RenewTime.Time,
+	}
+
+	if err := leaderinfo.Update(ctx, params); err != nil {
+		log.Printf("mysqlResourceLock Update params %+v failed, %v", params, err)
+		return err
+	}
+
 	return nil
 }
 
